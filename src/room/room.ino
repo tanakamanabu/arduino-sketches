@@ -1,6 +1,10 @@
 #include <M5StickC.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
 #include "M5_ENV.h"
 #include "mhz19c.h"
+#include "env.h"
 
 enum Status {
   ST_INITIALIZE,
@@ -22,14 +26,58 @@ Status status = ST_INITIALIZE;
 
 void setup() {
   M5.begin(); 
+  WiFi.begin( WIFI_SSID, WIFI_PASSWORD );
   pinMode(GPIO_NUM_10, OUTPUT); // LEDのON/OFF制御
-  led( false );  
+  led( false );
   M5.Lcd.setRotation(3);  
   Wire.begin();
   qmp6988.init();
   mhz19c.init( &Serial1, 36, 0 );
   mhz19c.setSelfCalibration( false );
+
+  //Wifiがつながるまで待機する
+  while( WiFi.status() != WL_CONNECTED ){
+    delay(500);
+    Serial.print(".");
+  }
+  
   status = ST_SENSOR;
+}
+
+boolean sendData(){
+  HTTPClient client;
+  String url = HOST;
+  url += "/api/add_data";
+  client.begin( url );
+  client.addHeader( "Content-Type", "application/json" );
+  String queryString = "{";
+  queryString += "\"place_id\": \"1\",";
+  
+  queryString += "\"data1\": \"";
+  queryString += tmp;
+  queryString += "\",";
+  
+  queryString += "\"data2\": \"";
+  queryString += hum;
+  queryString += "\",";
+  
+  queryString += "\"data3\": \"";
+  queryString += pressure;
+  queryString += "\",";
+  
+  queryString += "\"data4\": \"";
+  queryString += co2;
+  queryString += "\",";
+
+  queryString += "\"pass\": \"";
+  queryString += PASS;
+  
+  queryString += "\"}";
+  
+  int statusCode = client.POST(queryString);
+  client.end();
+
+  return statusCode == 200;
 }
 
 void led( boolean on ){
@@ -60,7 +108,7 @@ void loop() {
 }
 
 void loopCalibration() {
-  M5.lcd.fillRect(0, 0, 120, 60, BLACK);
+  M5.lcd.fillScreen(BLACK);
   M5.lcd.setCursor(0, 0);
   M5.lcd.printf("begin calibration.");
  
@@ -75,7 +123,7 @@ void loopCalibration() {
   led(false);
   delay(2000);
 
-  M5.lcd.fillRect(0, 0, 100, 60, BLACK);
+  M5.lcd.fillScreen(BLACK);
   M5.lcd.setCursor(0, 0);
   M5.lcd.printf("end calibration.");
   delay(1000);
@@ -96,6 +144,7 @@ void readSensor() {
 
 void loopSensor(){
   readSensor();
+  sendData();
   int16_t bg,fg;
   if( co2 > 1200 ){
     fg = BLACK;
@@ -104,13 +153,15 @@ void loopSensor(){
     fg = WHITE;
     bg = BLACK;
   }
+
   M5.lcd.fillScreen(bg);
   M5.lcd.setCursor(0, 0);
   M5.lcd.setTextFont(2);
   M5.lcd.setTextColor(fg,bg);
   M5.lcd.printf("Tem: %2.1f  \r\nHum: %2.0f%%  \r\nPre: %2.2fhPa\r\nCo2: %dppm\r\n",
                   tmp, hum, pressure, co2);
-
+  M5.lcd.println(WiFi.localIP());
+  
   //10秒ごとにチェックする
   sleepTime = 1000 * 10;
 }
